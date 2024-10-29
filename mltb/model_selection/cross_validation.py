@@ -8,6 +8,7 @@ def run_cv(X, y, Xtest, cv_generator, mdl, metric, task=None, verbose=False, cal
             Xtest = None
 
     kf = cv_generator
+    kfolds = cv_generator.n_splits
     kf_name = kf.__class__.__name__
     kfy = y if kf_name == 'StratifiedKFold' else None
 
@@ -23,7 +24,7 @@ def run_cv(X, y, Xtest, cv_generator, mdl, metric, task=None, verbose=False, cal
         Xval = X.iloc[val_index]
 
         # train
-        mdl_cv = mdl.copy().fit(Xtrain,ytrain)
+        mdl_cv = mdl.fit(Xtrain,ytrain)
 
         # oof/test prediction
         if task in ['regression', 'classification']:
