@@ -1,5 +1,5 @@
-
-
+import warnings
+warnings.filterwarnings('ignore')
 import pandas as pd
 from sklearn.model_selection import KFold, StratifiedKFold
 
@@ -8,8 +8,9 @@ def run_cv(X, y, Xtest, mdl, metric, params, kfolds=5, task=None, random_state=8
            calc_score=True):
     if not shuffle:
         random_state = None
-    if Xtest.empty:
-        Xtest = None
+    if isinstance(Xtest, (pd.DataFrame)):
+        if Xtest.empty:
+            Xtest = None
 
     oof = pd.Series()
     ytest = pd.DataFrame()
