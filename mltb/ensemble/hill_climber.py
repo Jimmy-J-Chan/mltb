@@ -109,7 +109,7 @@ def climb_hill(y, oof_pred_df, test_pred_df, objective, eval_metric, negative_we
         return current_best_test_preds.values
 
 
-def min_optimise_ens(oofs, y, ypreds):
+def hill_climb_ens(oofs, y, ypreds):
     """
     get ensemble weights using hill climbers
     https://github.com/Matt-OP/hillclimbers
@@ -128,5 +128,5 @@ if __name__ == '__main__':
     ypreds = preds['ypreds']
     ypreds.columns = ypreds.columns.astype(str)
 
-    ypreds_ens = min_optimise_ens(oofs, ytrain, ypreds)
+    ypreds_ens = hill_climb_ens(oofs, ytrain, ypreds)
     pass
