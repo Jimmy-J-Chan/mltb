@@ -2,9 +2,9 @@ from sklearn.metrics import root_mean_squared_error as rmse
 import pandas as pd
 import numpy as np
 
+np.arange()
 
-
-def climb_hill(y, oof_pred_df, test_pred_df, objective, eval_metric, negative_weights=False, precision=0.01, return_oof_preds=False):
+def climb_hill(oofs, y, ypreds, obj, metric, neg_w=False, step=0.01, return_oof_ens=False):
 
     STOP = False
     scores = {}
@@ -109,13 +109,13 @@ def climb_hill(y, oof_pred_df, test_pred_df, objective, eval_metric, negative_we
         return current_best_test_preds.values
 
 
-def hill_climb_ens(oofs, y, ypreds):
+def hill_climbers_ens(oofs, y, ypreds, obj=None, metric=None, neg_w=False, step=0.01, return_oof_ens=False):
     """
     get ensemble weights using hill climbers
     https://github.com/Matt-OP/hillclimbers
     """
-    ypreds_ens = climb_hill(y, oofs, ypreds, "minimize", rmse, negative_weights=False)
-    return ypreds_ens
+    ypreds_ens, w = climb_hill(oofs, y, ypreds, obj, metric, neg_w=False, step=step, return_oof_ens=False)
+    return ypreds_ens, w
 
 
 if __name__ == '__main__':
@@ -128,5 +128,5 @@ if __name__ == '__main__':
     ypreds = preds['ypreds']
     ypreds.columns = ypreds.columns.astype(str)
 
-    ypreds_ens = hill_climb_ens(oofs, ytrain, ypreds)
+    ypreds_ens, w = hill_climbers_ens(oofs, ytrain, ypreds, 'minimize')
     pass
