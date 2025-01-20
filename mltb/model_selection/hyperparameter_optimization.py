@@ -5,6 +5,9 @@ from mltb.model_selection.cross_validation import run_cv
 def hpo_optuna():
     """
     hyperparameter optimization(hpo) using optuna
+    - TODO: diversity score from optuna trials - pick top N trails with max diversity
+    - TODO: return leaderboard (lb)
+    -
     """
 
 
