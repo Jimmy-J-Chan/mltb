@@ -26,5 +26,7 @@ setuptools.setup(
                       'scikit-learn',
                       'lightgbm',
                       'catboost',
-                      'xgboost']
+                      'xgboost',
+                      'optuna'
+                      ]
 )
