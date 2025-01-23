@@ -1,3 +1,4 @@
+import numpy as np
 import pandas as pd
 from mltb.model_selection.cross_validation import run_cv
 from mltb.utils.utilities import cc
@@ -8,7 +9,7 @@ def sfs_backward(X,y, cv_g, mdl, metric, metric_scaler, cv_task, verbose=False):
     feats_itr = feats_all.copy()
 
     # inital score
-    oof, score, ytest = run_cv(X[feats_itr], y, None, cv_g, mdl, metric, cv_task, verbose=verbose)
+    oof, score, ytest = run_cv(X[feats_itr], y, None, cv_g, mdl, metric, cv_task, verbose=False)
     score = score * metric_scaler
     tmp_sb = pd.DataFrame({'iteration': 'bmk1', 'score': score, 'feat_importance': np.nan, 'feature_dropped': np.nan}, index=[0])
     tmp_sb['features'] = None
@@ -25,7 +26,7 @@ def sfs_backward(X,y, cv_g, mdl, metric, metric_scaler, cv_task, verbose=False):
 
         for feat in feats_itr:
             tmp_feats = [c for c in feats_itr if c!=feat]
-            oof, score, ytest = run_cv(X[tmp_feats], y, None, cv_g, mdl, metric, cv_task, verbose=verbose)
+            oof, score, ytest = run_cv(X[tmp_feats], y, None, cv_g, mdl, metric, cv_task, verbose=False)
             score = score * metric_scaler
             tmp_sb = pd.DataFrame({'iteration': ix, 'score': score, 'feat_importance':bmk_score - score}, index=[0])
             tmp_sb['features'] = None
@@ -42,7 +43,7 @@ def sfs_backward(X,y, cv_g, mdl, metric, metric_scaler, cv_task, verbose=False):
         worst_itr = worst_itr.iloc[0]
         worst_itr_score = worst_itr['score']
         worst_itr_feat = worst_itr['feature_dropped']
-        # removing feature improves score, check score > bmk score
+        # if removing feature improves score, drop feature, check score > bmk score
         if worst_itr_score > bmk_score:
             feats_itr = [c for c in feats_itr if c!=worst_itr_feat]
             sb.loc[worst_itr_idx, 'worst_iteration'] = True
@@ -72,7 +73,7 @@ def sfs_forward(X,y, cv_g, mdl, metric, metric_scaler, cv_task, verbose=False):
         feats_itr = feats_all.copy()
         for feat in feats_itr:
             tmp_feats = feats_selection + [feat]
-            oof, score, ytest = run_cv(X[tmp_feats], y, None, cv_g, mdl, metric, cv_task, verbose=verbose)
+            oof, score, ytest = run_cv(X[tmp_feats], y, None, cv_g, mdl, metric, cv_task, verbose=False)
             score = score * metric_scaler
             tmp_sb = pd.DataFrame({'iteration':ix, 'score': score}, index=[0])
             tmp_sb['features'] = None
@@ -85,7 +86,7 @@ def sfs_forward(X,y, cv_g, mdl, metric, metric_scaler, cv_task, verbose=False):
         best_itr_idx = best_itr.index[0]
         best_itr = best_itr.iloc[0]
         best_score_this_itr = best_itr.score
-        if best_score_this_itr > best_score_last_itr:
+        if (best_score_this_itr > best_score_last_itr) | (ix==1):
             best_score_last_itr = best_score_this_itr
             feats_selection = best_itr.features
             feats_all = [c for c in feats_all if c not in feats_selection]
@@ -125,39 +126,29 @@ def sfs(X, y, cv_generator, mdl, metric, cv_task=None, direction='forward', verb
     elif direction == 'backward':
         df_sfs, sb = sfs_backward(X,y, cv_g, mdl, metric, metric_scaler, cv_task, verbose)
 
-    # some print out
-
     return df_sfs, sb
 
 
 
 if __name__ == '__main__':
-    from conf.config import *
     from sklearn.model_selection import StratifiedKFold
     from lightgbm import LGBMRegressor
-    from src.qwk import quadratic_weighted_kappa
+    from sklearn.metrics import root_mean_squared_error as rmse
 
-    target = 'PCIAT-PCIAT_Total'
-    SEED = config.seed
+    target = 'price'
+    SEED = 888
 
-    train = pd.read_parquet(config.project.folder + '/data/train.parquet')
-    test = pd.read_parquet(config.project.folder + '/data/test.parquet')
+    train = pd.read_parquet(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\train.parquet")
+    test = pd.read_parquet(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\test.parquet")
 
-    # remove pciat cols from train
-    pciat_cols = [c for c in train.columns if c.startswith('PCIAT') & (c!=target)]
-    train = train.drop(columns=pciat_cols)
-
-    # remove nan targets
-    train = train.dropna(subset=[target])
-
-    all_cols = [c for c in train.columns if c not in [target, 'id','sii']][:10]
+    all_cols = [c for c in train.columns if c not in [target, 'id','sii']]
     X = train[all_cols]
     y = train[target]
     Xtest = test[all_cols]
-    kfolds = 2
+    kfolds = 3
     cv_g = StratifiedKFold(n_splits=kfolds)
-    metric = quadratic_weighted_kappa
-    setattr(metric, 'greater_is_better', True)
+    metric = rmse
+    setattr(metric, 'greater_is_better', False)
     params = {'verbose': -1, 'random_state': SEED}
     mdl = LGBMRegressor(**params)
     cv_task = 'regression'
@@ -168,6 +159,9 @@ if __name__ == '__main__':
     print('forward', list(df_fw.columns.sort_values()))
     df_bw, sb_bw = sfs(X,y, cv_g, mdl, metric, cv_task, 'backward', verbose=True)
     print('backward', list(df_bw.columns.sort_values()))
+
+    # forward ['brand', 'engine', 'fuel_type', 'milage', 'transmission'] -73619.54
+    # backward['brand', 'clean_title', 'fuel_type', 'milage', 'model_year', 'transmission'] -73437.73 <- best
     pass
 
 

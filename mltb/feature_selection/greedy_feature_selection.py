@@ -4,7 +4,7 @@ from mltb.utils.utilities import cc
 from itertools import combinations
 
 
-def gfs(X, y, cv_generator, mdl, metric, cv_task=None, n_features=None, n_features_sort=True, verbose=False):
+def gfs(X, y, cv_g, mdl, metric, cv_task=None, n_features=None, n_features_sort=True, verbose=False):
     """
     Greedy Feature Selection (gfs)
     - gets cv score for all combinations up to n_features
