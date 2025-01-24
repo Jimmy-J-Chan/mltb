@@ -16,7 +16,7 @@ def diversity_selection(lb=None):
     # encode
     bool_cols = [c for c in lb_calc.columns if lb_calc[c].dtype=='bool']
     lb_calc.loc[:,bool_cols] = lb_calc.loc[:,bool_cols].astype(int)
-    cat_cols = [c for c in lb_calc.columns if lb_calc[c].dtype=='object'] # categorical
+    cat_cols = [c for c in lb_calc.columns if (lb_calc[c].dtype=='object')|(lb_calc[c].dtype=='category')]
     for cat_col in cat_cols:
         cmap = {c:ix for ix, c in enumerate(lb_calc[cat_col].unique())}
         lb_calc.loc[:,cat_col] = lb_calc.loc[:,cat_col].map(cmap)
