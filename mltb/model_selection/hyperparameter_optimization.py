@@ -6,6 +6,33 @@ from optuna.trial import TrialState
 
 SEED = 888
 
+
+def diversity_selection(lb=None):
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    #lb = pd.read_pickle(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
+    feats = [c for c in lb.columns if c!='score']
+    lb_calc = lb.copy()
+
+    # encode
+    bool_cols = [c for c in lb_calc.columns if lb_calc[c].dtype=='bool']
+    lb_calc.loc[:,bool_cols] = lb_calc.loc[:,bool_cols].astype(int)
+
+    cat_cols = [c for c in lb_calc.columns if lb_calc[c].dtype=='object']
+    for cat_col in cat_cols:
+        cmap = {c:ix for ix, c in enumerate(lb_calc[cat_col].unique())}
+        lb_calc.loc[:,cat_col] = lb_calc.loc[:,cat_col].map(cmap)
+
+    lb_calc = lb_calc[feats].head(int(0.25*len(lb_calc))) # pick top 25%
+    sim = pd.DataFrame(cosine_similarity(lb_calc), index=lb_calc.index, columns=lb_calc.index)
+
+    # for each trial in sim, pick the trial that has the smallest cosine similarity
+    # keep best perf trial as well, remove dups
+    trials2keep = sim.idxmin().to_list()+[lb['score'].idxmax()]
+    trials2keep = list(set(trials2keep)) # remove dups
+    return trials2keep
+
+
 def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=True):
     """
     hyperparameter optimization(hpo) using optuna
@@ -48,7 +75,7 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=T
         return score
 
     study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
-    study.optimize(objective, n_trials=250, timeout=60*10)
+    study.optimize(objective, n_trials=100, timeout=60*10)
 
     # leaderboard and df
     lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
@@ -57,7 +84,8 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=T
     lb = lb.sort_values(by=['score'], ascending=False)
 
     # diversity selection
-
+    trials2keep = diversity_selection(lb)
+    lb.loc[lb.index.isin(trials2keep),'trials2keep'] = True
     return lb
 
 
@@ -66,6 +94,9 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=T
 
 if __name__ == '__main__':
     import pandas as pd
+
+    diversity_selection()
+
     from lightgbm import LGBMRegressor
     from sklearn.metrics import root_mean_squared_error as rmse
     from sklearn.model_selection import StratifiedKFold
@@ -77,8 +108,8 @@ if __name__ == '__main__':
     test = pd.read_parquet(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\test.parquet")
 
     all_cols = [c for c in train.columns if c not in [target, 'id','sii']]
-    X = train[all_cols]
-    y = train[target]
+    X = train[all_cols].sample(30000)
+    y = train[target].loc[X.index]
     Xtest = test[all_cols]
     kfolds = 3
     cv_g = StratifiedKFold(n_splits=kfolds)
@@ -88,7 +119,7 @@ if __name__ == '__main__':
     mdl = LGBMRegressor
     cv_task = 'regression'
 
-    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params, verbose=True)
+    lb, trials2keep = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params, verbose=True)
     lb.to_pickle(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
     pass
 
