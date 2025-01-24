@@ -34,21 +34,19 @@ def optuna_fs(X, y, cv_g, mdl, metric, cv_task=None, verbose=False):
         trials_to_consider = trial.study.get_trials(deepcopy=False, states=states_to_consider)
         for t in reversed(trials_to_consider):
             if trial.params == t.params:
-                # Use the existing value as trial duplicated the parameters.
-                return t.value
+                return t.value # Use the existing value as trial duplicated the parameters.
 
         oof, score, ytest = run_cv(X[feats_selected], y, None, cv_g, mdl, metric, cv_task, verbose=False)
         score = score * metric_scaler
         return score
 
     study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=888), pruner=HyperbandPruner())
-    study.optimize(objective, n_trials=500, timeout=60*10)
+    study.optimize(objective, n_trials=250, timeout=60*10)
 
     # leaderboard and df
-    lb = pd.concat([pd.Series(t.params) for t in study.trials], axis=1).T
-    lb['score'] = [t.value for t in study.trials]
+    lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
     lb = lb.drop_duplicates()
-    lb.columns = [c[2:] if c.startswith('f_') else c for c in lb.columns]
+    lb.columns = [c[9:] if c.startswith('params_f_') else c for c in lb.columns]
 
     best_trial_feats = lb.loc[lb['score'].idxmax()].drop(['score'])
     df_ofs = X[best_trial_feats.loc[best_trial_feats].index]
@@ -62,8 +60,8 @@ if __name__ == '__main__':
     target = 'price'
     SEED = 888
 
-    train = pd.read_parquet(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\train.parquet")
-    test = pd.read_parquet(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\test.parquet")
+    train = pd.read_parquet(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\train.parquet")
+    test = pd.read_parquet(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\test.parquet")
 
     all_cols = [c for c in train.columns if c not in [target, 'id','sii']]
     X = train[all_cols]
@@ -79,5 +77,4 @@ if __name__ == '__main__':
 
     # optuna feature selection
     df_ofs, lb = optuna_fs(X, y, cv_g, mdl, metric, cv_task, verbose=True)
-
     pass

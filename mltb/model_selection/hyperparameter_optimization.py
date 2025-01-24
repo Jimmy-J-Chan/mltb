@@ -1,81 +1,95 @@
 import optuna
 from mltb.model_selection.cross_validation import run_cv
+from optuna.samplers import TPESampler
+from optuna.pruners import HyperbandPruner
+from optuna.trial import TrialState
 
+SEED = 888
 
-def hpo_optuna():
+def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=True):
     """
     hyperparameter optimization(hpo) using optuna
     - TODO: diversity score from optuna trials - pick top N trails with different diversity
     - TODO: return leaderboard (lb)
     -
     """
+    if not hasattr(metric, 'greater_is_better'):
+        raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
+    metric_scaler = 1 if metric.greater_is_better else -1
 
+    def objective(trial):
+        # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
+        params_opt = {
+            'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
+            'max_bin': trial.suggest_int('max_bin', 64, 512),
+            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, step=.01),
+            'num_iterations': trial.suggest_int('num_iterations', 50, 500, step=50),
+            'num_leaves': trial.suggest_int('num_leaves', 2, 256),
+            'max_depth ': -1, # unlimited
+            'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 5, 100),
+            'bagging_fraction': trial.suggest_float('bagging_fraction', 0.4, 1.0),
+            'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
+            'feature_fraction': trial.suggest_float('feature_fraction', 0.4, 1.0),
+            'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
+            'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
+            'extra_trees': trial.suggest_categorical("extra_trees", [True, False]),
+        }
 
-    pass
+        # Check whether we already evaluated the trial
+        states_to_consider = (TrialState.COMPLETE,)
+        trials_to_consider = trial.study.get_trials(deepcopy=False, states=states_to_consider)
+        for t in reversed(trials_to_consider):
+            if trial.params == t.params:
+                return t.value # Use the existing value as trial duplicated the parameters.
+
+        mdl_opt = mdl(**params_opt|mdl_params)
+        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, verbose=False)
+        score = score * metric_scaler
+        return score
+
+    study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
+    study.optimize(objective, n_trials=250, timeout=60*10)
+
+    # leaderboard and df
+    lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
+    lb = lb.drop_duplicates()
+    lb.columns = [c[7:] if c.startswith('params_') else c for c in lb.columns]
+    lb = lb.sort_values(by=['score'], ascending=False)
+
+    # diversity selection
+
+    return lb
 
 
 
 
 
 if __name__ == '__main__':
+    import pandas as pd
     from lightgbm import LGBMRegressor
     from sklearn.metrics import root_mean_squared_error as rmse
     from sklearn.model_selection import StratifiedKFold
 
+    target = 'price'
+    SEED = 888
+
+    train = pd.read_parquet(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\train.parquet")
+    test = pd.read_parquet(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\test.parquet")
+
+    all_cols = [c for c in train.columns if c not in [target, 'id','sii']]
     X = train[all_cols]
     y = train[target]
     Xtest = test[all_cols]
+    kfolds = 3
+    cv_g = StratifiedKFold(n_splits=kfolds)
+    metric = rmse
+    setattr(metric, 'greater_is_better', False)
+    mdl_params = {'verbose': -1, 'random_state': SEED}
     mdl = LGBMRegressor
-    metric = quadratic_weighted_kappa
-    params = {'verbose': -1, 'random_state': SEED}
-    kfolds = 5
-    task = 'regression'
+    cv_task = 'regression'
 
-    def objective(trial):
-        param_opt = {'learning_rate': trial.suggest_float('learning_rate', 5e-3, 0.1, log=True),
-                     'feature_fraction': trial.suggest_float('feature_fraction', 0.4,1),
-                     'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 2, 60),
-                     'num_leaves': trial.suggest_int('num_leaves', 16, 255),
-                     'extra_trees': trial.suggest_categorical('extra_trees', [True,False]),
-                     'data_sample_strategy': 'bagging',
-                     #'n_estimators': trial.suggest_int('n_estimators', 50, 300, 25),
-                     }
-        param_opt = param_opt|params
-        oof, score, ytest = run_cv(X, y, None, mdl, metric, param_opt, kfolds, task, SEED, verbose=False)
-
-        # with threshold rounding
-        def threshold_Rounder(oof_non_rounded, thresholds):
-            return np.where(oof_non_rounded < thresholds[0], 0,
-                            np.where(oof_non_rounded < thresholds[1], 1,
-                                     np.where(oof_non_rounded < thresholds[2], 2, 3)))
-
-        def evaluate_predictions(thresholds, y_true, oof_non_rounded):
-            rounded_p = threshold_Rounder(oof_non_rounded, thresholds)
-            return -quadratic_weighted_kappa(y_true, rounded_p, map_preds=False)
-
-        tmp_y_true = y.astype(int).clip(0,100)
-        ssi_map = ({k:0 for k in range(31)} |
-                   {k:1 for k in range(31,50)} |
-                   {k:2 for k in range(50,80)} |
-                   {k:3 for k in range(80,101)})
-        y_sii = tmp_y_true.map(ssi_map)
-        KappaOPtimizer = minimize(evaluate_predictions, x0=[31, 50, 80], args=(y_sii, oof), method='Nelder-Mead')
-        assert KappaOPtimizer.success, "Optimization did not converge."
-
-        oof_tuned = threshold_Rounder(oof, KappaOPtimizer.x)
-        print(f"trial: {trial.number} - {KappaOPtimizer.x}")
-        score_tuned = metric(y_sii, oof_tuned)
-        return score_tuned
-
-    study = optuna.create_study(direction='maximize')
-    study.optimize(objective, n_trials=100)
-
-    best_trail_num = study.best_trial.number
-    best_score = study.best_value
-    best_params = study.best_params
-    print(best_trail_num, best_score, best_params)
-
-    hpo_optuna()
+    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params, verbose=True)
+    lb.to_pickle(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
     pass
 
 
