@@ -12,16 +12,16 @@ def gfs(X, y, cv_g, mdl, metric, cv_task=None, n_features=None, n_features_sort=
     - if n_features != None,
         if n_features_sort=True, select top n features sorted by univariate cv score (i.e 1 feature, target)
         if n_features_sort=False, select first n features without sorting
-    Score board
+    leader board
     - tracks the cv scores from each iteration
 
-    :return: df with selected features, score_board (sb)
+    :return: df with selected features, leaderboard (lb)
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
     metric_scaler = 1 if metric.greater_is_better else -1
 
-    sb = pd.DataFrame()
+    lb = pd.DataFrame()
     feats_all = X.columns
 
     # calc univariate cv scores
@@ -32,19 +32,19 @@ def gfs(X, y, cv_g, mdl, metric, cv_task=None, n_features=None, n_features_sort=
             print(f' -> iteration: {ix}/{featsN} - {feat}')
         oof, score, ytest = run_cv(X[[feat]], y, None, cv_g, mdl, metric, cv_task, verbose=False)
         score = score * metric_scaler
-        tmp_sb = pd.DataFrame({'iteration': ix, 'score': score}, index=[0])
-        tmp_sb['features'] = None
-        tmp_sb['features'] = tmp_sb['features'].astype(object)
-        tmp_sb.at[0, 'features'] = [feat]
-        sb = cc(sb, tmp_sb, axis=0)
-    sb = sb.reset_index(drop=True)
+        tmp_lb = pd.DataFrame({'iteration': ix, 'score': score}, index=[0])
+        tmp_lb['features'] = None
+        tmp_lb['features'] = tmp_lb['features'].astype(object)
+        tmp_lb.at[0, 'features'] = [feat]
+        lb = cc(lb, tmp_lb, axis=0)
+    lb = lb.reset_index(drop=True)
 
     feats4comb = feats_all
     if n_features is not None:
         if n_features_sort:
-            features_topN = sb.sort_values(by=['score'],ascending=False).head(n_features)
+            features_topN = lb.sort_values(by=['score'],ascending=False).head(n_features)
         else:
-            features_topN = sb.head(n_features)
+            features_topN = lb.head(n_features)
         feats4comb = [c[0] for c in features_topN['features']]
 
     # get all combinations
@@ -59,18 +59,18 @@ def gfs(X, y, cv_g, mdl, metric, cv_task=None, n_features=None, n_features_sort=
             print(f' -> iteration: {ix}/{featsN} - {feat}')
         oof, score, ytest = run_cv(X[feat], y, None, cv_g, mdl, metric, cv_task, verbose=False)
         score = score * metric_scaler
-        tmp_sb = pd.DataFrame({'iteration': ix+itr_offset, 'score': score}, index=[0])
-        tmp_sb['features'] = None
-        tmp_sb['features'] = tmp_sb['features'].astype(object)
-        tmp_sb.at[0, 'features'] = feat
-        sb = cc(sb, tmp_sb, axis=0)
+        tmp_lb = pd.DataFrame({'iteration': ix+itr_offset, 'score': score}, index=[0])
+        tmp_lb['features'] = None
+        tmp_lb['features'] = tmp_lb['features'].astype(object)
+        tmp_lb.at[0, 'features'] = feat
+        lb = cc(lb, tmp_lb, axis=0)
 
-    # sort score board, best combination at top
-    sb = sb.reset_index(drop=True).sort_values(by=['score'], ascending=False)
+    # sort leader board, best combination at top
+    lb = lb.reset_index(drop=True).sort_values(by=['score'], ascending=False)
 
     # return df with best combination
-    df_gfs = X[sb.iloc[0].loc['features']]
-    return df_gfs, sb
+    df_gfs = X[lb.iloc[0].loc['features']]
+    return df_gfs, lb
 
 if __name__ == '__main__':
     from sklearn.model_selection import StratifiedKFold
@@ -96,8 +96,8 @@ if __name__ == '__main__':
     cv_task = 'regression'
 
     # greedy feature selection
-    #df_gfs, sb = gfs(X,y, cv_g, mdl, metric, cv_task, n_features=3, n_features_sort=True, verbose=True)
-    df_gfs, sb = gfs(X,y, cv_g, mdl, metric, cv_task, verbose=True)
-    # save scoreboard greedy search
-    sb.to_pickle(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\sb_greedy_feature_selection.pkl")
+    #df_gfs, lb = gfs(X,y, cv_g, mdl, metric, cv_task, n_features=3, n_features_sort=True, verbose=True)
+    df_gfs, lb = gfs(X,y, cv_g, mdl, metric, cv_task, verbose=True)
+    # save leaderboard greedy search
+    lb.to_pickle(r"C:\Users\n8871191\PycharmProjects\mltb\data\used_car_prices\lb_greedy_feature_selection.pkl")
     pass

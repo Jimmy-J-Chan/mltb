@@ -13,16 +13,16 @@ def optuna_fs(X, y, cv_g, mdl, metric, cv_task=None, verbose=False):
     - TPESampler
     - Hyperband pruner
 
-    Score board
+    leader board
     - tracks the cv scores from each iteration
 
-    :return: df with selected features, score_board (sb)
+    :return: df with selected features, leaderboard (lb)
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
     metric_scaler = 1 if metric.greater_is_better else -1
 
-    sb = pd.DataFrame()
+    lb = pd.DataFrame()
     feats_all = X.columns
 
     def objective(trial):
@@ -44,15 +44,15 @@ def optuna_fs(X, y, cv_g, mdl, metric, cv_task=None, verbose=False):
     study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=888), pruner=HyperbandPruner())
     study.optimize(objective, n_trials=500, timeout=60*10)
 
-    # scoreboard and df
-    sb = pd.concat([pd.Series(t.params) for t in study.trials], axis=1).T
-    sb['score'] = [t.value for t in study.trials]
-    sb = sb.drop_duplicates()
-    sb.columns = [c[2:] if c.startswith('f_') else c for c in sb.columns]
+    # leaderboard and df
+    lb = pd.concat([pd.Series(t.params) for t in study.trials], axis=1).T
+    lb['score'] = [t.value for t in study.trials]
+    lb = lb.drop_duplicates()
+    lb.columns = [c[2:] if c.startswith('f_') else c for c in lb.columns]
 
-    best_trial_feats = sb.loc[sb['score'].idxmax()].drop(['score'])
+    best_trial_feats = lb.loc[lb['score'].idxmax()].drop(['score'])
     df_ofs = X[best_trial_feats.loc[best_trial_feats].index]
-    return df_ofs, sb
+    return df_ofs, lb
 
 if __name__ == '__main__':
     from sklearn.model_selection import StratifiedKFold
@@ -78,6 +78,6 @@ if __name__ == '__main__':
     cv_task = 'regression'
 
     # optuna feature selection
-    df_ofs, sb = optuna_fs(X, y, cv_g, mdl, metric, cv_task, verbose=True)
+    df_ofs, lb = optuna_fs(X, y, cv_g, mdl, metric, cv_task, verbose=True)
 
     pass
