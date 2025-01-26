@@ -35,7 +35,7 @@ def diversity_selection(lb=None):
 
     return trials2keep
 
-def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=True):
+def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trials=100, verbose=True):
     """
     hyperparameter optimization(hpo) for lgbm using optuna
     - returns as leaderboard with indication for trials to consider
@@ -60,6 +60,7 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=T
             'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
             'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
             'extra_trees': trial.suggest_categorical("extra_trees", [True, False]),
+            'early_stopping_round': 100
         }
 
         # Check whether we already evaluated the trial
@@ -70,12 +71,21 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, verbose=T
                 return t.value # Use the existing value as trial duplicated the parameters.
 
         mdl_opt = mdl(**params_opt|mdl_params)
-        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, verbose=False)
+        fit_params = {'callbacks': [optuna.integration.LightGBMPruningCallback(trial, 'rmse')], 'eval_metric':'rmse'}
+
+        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, fit_params=fit_params, verbose=False)
         score = score * metric_scaler
         return score
 
-    study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
-    study.optimize(objective, n_trials=100, timeout=60*10)
+    #study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
+    study = optuna.create_study(direction='minimize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
+    study.optimize(objective, n_trials=trials, timeout=60*10)
+
+    # check n_trials are conducted - sometimes exits early
+    trials2complete = trials - len(study.trials)
+    while trials2complete>0:
+        study.optimize(objective, n_trials=trials2complete, timeout=60*10)
+        trials2complete = trials - len(study.trials)
 
     # leaderboard and df
     lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
@@ -116,7 +126,7 @@ if __name__ == '__main__':
     mdl = LGBMRegressor
     cv_task = 'regression'
 
-    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params, verbose=True)
+    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params, trials=200, verbose=True)
     lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
     pass
 

@@ -3,7 +3,7 @@ warnings.filterwarnings('ignore')
 import pandas as pd
 from copy import deepcopy
 
-def run_cv(X, y, Xtest, cv_generator, mdl, metric, task=None, verbose=False, calc_score=True, return_mdls=False):
+def run_cv(X, y, Xtest, cv_generator, mdl, metric, task=None, verbose=False, fit_params={}, calc_score=True, return_mdls=False):
     if isinstance(Xtest, (pd.DataFrame)):
         if Xtest.empty:
             Xtest = None
@@ -24,9 +24,12 @@ def run_cv(X, y, Xtest, cv_generator, mdl, metric, task=None, verbose=False, cal
         Xtrain = X.iloc[train_index]
         ytrain = y.iloc[train_index]
         Xval = X.iloc[val_index]
+        yval = y.iloc[val_index]
 
         # train
-        mdl_cv = mdl.fit(Xtrain,ytrain)
+        fit_params['eval_set'] = [(Xval, yval)]
+        #fit_params['eval_metric'] = metric #'rmse'
+        mdl_cv = mdl.fit(Xtrain, ytrain, **fit_params)
         if return_mdls:
             mdls2treturn.append(deepcopy(mdl_cv))
 
