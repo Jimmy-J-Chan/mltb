@@ -3,8 +3,11 @@ from mltb.model_selection.cross_validation import run_cv
 from optuna.samplers import TPESampler
 from optuna.pruners import HyperbandPruner
 from optuna.trial import TrialState
+from mltb.model_selection.get_eval_metric import get_eval_metric
 
 SEED = 888
+
+
 
 def diversity_selection(lb=None):
     from sklearn.metrics.pairwise import cosine_similarity
@@ -35,14 +38,14 @@ def diversity_selection(lb=None):
 
     return trials2keep
 
-def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trials=100, verbose=True):
+def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, trials=100, verbose=True):
     """
     hyperparameter optimization(hpo) for lgbm using optuna
     - returns as leaderboard with indication for trials to consider
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
-    metric_scaler = 1 if metric.greater_is_better else -1
+    #metric_scaler = 1 if metric.greater_is_better else -1
 
     def objective(trial):
         # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
@@ -71,14 +74,15 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trials=10
                 return t.value # Use the existing value as trial duplicated the parameters.
 
         mdl_opt = mdl(**params_opt|mdl_params)
-        fit_params = {'callbacks': [optuna.integration.LightGBMPruningCallback(trial, 'rmse')], 'eval_metric':'rmse'}
+        eval_metric = get_eval_metric(cv_task)
+        fit_params = {'callbacks': [optuna.integration.LightGBMPruningCallback(trial, eval_metric)],
+                      'eval_metric': eval_metric}
 
         oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, fit_params=fit_params, verbose=False)
-        score = score * metric_scaler
+        #score = score * metric_scaler
         return score
 
-    #study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
-    study = optuna.create_study(direction='minimize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
+    study = optuna.create_study(direction=direction, sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
     study.optimize(objective, n_trials=trials, timeout=60*10)
 
     # check n_trials are conducted - sometimes exits early
@@ -91,7 +95,7 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trials=10
     lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
     lb = lb.drop_duplicates()
     lb.columns = [c[7:] if c.startswith('params_') else c for c in lb.columns]
-    lb = lb.sort_values(by=['score'], ascending=False)
+    lb = lb.sort_values(by=['score'], ascending=False if metric.greater_is_better else True)
 
     # diversity selection
     trials2keep = diversity_selection(lb)
@@ -125,8 +129,9 @@ if __name__ == '__main__':
     mdl_params = {'verbose': -1, 'random_state': SEED}
     mdl = LGBMRegressor
     cv_task = 'regression'
+    direction = 'minimize'
 
-    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, cv_task, mdl_params, trials=200, verbose=True)
+    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, trials=200, verbose=True)
     lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
     pass
 

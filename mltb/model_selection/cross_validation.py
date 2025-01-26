@@ -28,7 +28,6 @@ def run_cv(X, y, Xtest, cv_generator, mdl, metric, task=None, verbose=False, fit
 
         # train
         fit_params['eval_set'] = [(Xval, yval)]
-        #fit_params['eval_metric'] = metric #'rmse'
         mdl_cv = mdl.fit(Xtrain, ytrain, **fit_params)
         if return_mdls:
             mdls2treturn.append(deepcopy(mdl_cv))
