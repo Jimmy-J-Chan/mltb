@@ -42,13 +42,17 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_p
     """
     hyperparameter optimization(hpo) for lgbm using optuna
     - returns as leaderboard with indication for trials to consider
+
+    optuna lgbm pruner
+    - https://github.com/optuna/optuna-examples/blob/main/lightgbm/lightgbm_integration.py
+
+    # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
     #metric_scaler = 1 if metric.greater_is_better else -1
 
     def objective(trial):
-        # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
         params_opt = {
             'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
             'max_bin': trial.suggest_int('max_bin', 64, 512),

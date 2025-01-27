@@ -3,13 +3,7 @@ from mltb.model_selection.cross_validation import run_cv
 from optuna.samplers import TPESampler
 from optuna.pruners import HyperbandPruner
 from optuna.trial import TrialState
-
-"""
-Pruning example
-- https://github.com/optuna/optuna-examples/blob/main/catboost/catboost_pruning.py
-
-"""
-
+from mltb.model_selection.get_eval_metric import get_eval_metric
 
 SEED = 888
 
@@ -42,33 +36,34 @@ def diversity_selection(lb=None):
 
     return trials2keep
 
-def hpo_optuna_catboost(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trials=100, verbose=True):
+def hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, trials=100, verbose=True):
     """
-    hyperparameter optimization(hpo) for lgbm using optuna
+    hyperparameter optimization(hpo) for catboost using optuna
     - returns as leaderboard with indication for trials to consider
+
+    optuna pruner
+    - https://optuna.readthedocs.io/en/v3.0.2/reference/generated/optuna.integration.CatBoostPruningCallback.html
+    - does not work for GPU
+
+    # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
-    metric_scaler = 1 if metric.greater_is_better else -1
+    #metric_scaler = 1 if metric.greater_is_better else -1
+
+    # check X
+    cat_cols = [c for c in X.columns if (X[c].dtype=='object')|(X[c].dtype=='category')]
+    for c in cat_cols:
+        X[c] = X[c].astype('object').fillna('NaN').astype('category')
 
     def objective(trial):
-
         params_opt = {
-
-
-            'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
-            'max_bin': trial.suggest_int('max_bin', 64, 512),
             'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, step=.01),
-            'num_iterations': trial.suggest_int('num_iterations', 50, 500, step=50),
-            'num_leaves': trial.suggest_int('num_leaves', 2, 256),
-            'max_depth ': -1, # unlimited
-            'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 5, 100),
-            'bagging_fraction': trial.suggest_float('bagging_fraction', 0.4, 1.0),
-            'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
-            'feature_fraction': trial.suggest_float('feature_fraction', 0.4, 1.0),
-            'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
-            'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
-            'extra_trees': trial.suggest_categorical("extra_trees", [True, False]),
+            'depth': trial.suggest_int('depth', 1, 16),
+            'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0.5, 10, step=0.5),
+            'use_best_model': True,
+            'iterations': 5000,
+            'random_strength': 0
         }
 
         # Check whether we already evaluated the trial
@@ -78,12 +73,25 @@ def hpo_optuna_catboost(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trial
             if trial.params == t.params:
                 return t.value # Use the existing value as trial duplicated the parameters.
 
+        eval_metric = get_eval_metric(cv_task).upper()
+        mdl_params['eval_metric'] = eval_metric
         mdl_opt = mdl(**params_opt|mdl_params)
-        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, verbose=False)
-        score = score * metric_scaler
+        pruning_callback = optuna.integration.CatBoostPruningCallback(trial, eval_metric)
+        fit_params = {'callbacks': [pruning_callback],
+                      #'verbose': 1000,
+                      'early_stopping_rounds': 200,
+                      'cat_features': cat_cols,
+                      }
+
+        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, fit_params=fit_params, verbose=False)
+
+        # evoke pruning manually.
+        pruning_callback.check_pruned()
+
+        #score = score * metric_scaler
         return score
 
-    study = optuna.create_study(direction='maximize', sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
+    study = optuna.create_study(direction=direction, sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
     study.optimize(objective, n_trials=trials, timeout=60*10)
 
     # check n_trials are conducted - sometimes exits early
@@ -96,7 +104,7 @@ def hpo_optuna_catboost(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trial
     lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
     lb = lb.drop_duplicates()
     lb.columns = [c[7:] if c.startswith('params_') else c for c in lb.columns]
-    lb = lb.sort_values(by=['score'], ascending=False)
+    lb = lb.sort_values(by=['score'], ascending=False if metric.greater_is_better else True)
 
     # diversity selection
     trials2keep = diversity_selection(lb)
@@ -107,7 +115,7 @@ def hpo_optuna_catboost(X, y, cv_g, mdl, metric, cv_task, mdl_params=None, trial
 
 if __name__ == '__main__':
     import pandas as pd
-    from lightgbm import LGBMRegressor
+    from catboost import CatBoostRegressor
     from sklearn.metrics import root_mean_squared_error as rmse
     from sklearn.model_selection import StratifiedKFold
 
@@ -127,11 +135,12 @@ if __name__ == '__main__':
     cv_g = StratifiedKFold(n_splits=kfolds)
     metric = rmse
     setattr(metric, 'greater_is_better', False)
-    mdl_params = {'verbose': -1, 'random_state': SEED}
-    mdl = LGBMRegressor
+    mdl_params = {'verbose': False, 'random_seed': SEED}
+    mdl = CatBoostRegressor
     cv_task = 'regression'
+    direction = 'minimize'
 
-    lb = hpo_optuna_catboost(X, y, cv_g, mdl, metric, cv_task, mdl_params, trials=100, verbose=True)
+    lb = hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, trials=200, verbose=True)
     lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_catboost.pkl")
     pass
 
