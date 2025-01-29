@@ -5,37 +5,10 @@ from optuna.pruners import HyperbandPruner
 from optuna.trial import TrialState
 from mltb.model_selection.get_eval_metric import get_eval_metric
 from mltb.utils.utilities import tic, toc
+from mltb.model_selection.diversity_selection import diversity_selection
 
 SEED = 888
 
-def diversity_selection(lb=None):
-    from sklearn.metrics.pairwise import cosine_similarity
-    #lb = pd.read_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
-
-    feats = [c for c in lb.columns if c!='score']
-    lb_calc = lb.copy()
-
-    # encode
-    bool_cols = [c for c in lb_calc.columns if lb_calc[c].dtype=='bool']
-    lb_calc.loc[:,bool_cols] = lb_calc.loc[:,bool_cols].astype(int)
-    cat_cols = [c for c in lb_calc.columns if (lb_calc[c].dtype=='object')|(lb_calc[c].dtype=='category')]
-    for cat_col in cat_cols:
-        cmap = {c:ix for ix, c in enumerate(lb_calc[cat_col].unique())}
-        lb_calc.loc[:,cat_col] = lb_calc.loc[:,cat_col].map(cmap)
-
-    lb_calc = lb_calc[feats].head(int(0.33*len(lb))) # pick top 33%
-    sim = pd.DataFrame(cosine_similarity(lb_calc), index=lb_calc.index, columns=lb_calc.index)
-
-    # iteratively pick trials that are diverse in hyperparamters as measured using cosine similarity
-    best_trial = lb_calc.index[0]
-    trials2keep = [best_trial]
-    threshold = 0.7
-    for trial in sim.columns:
-        tmp = sim.loc[trials2keep, trial] # sim scores between trials already picked against potential trial to be added
-        if (tmp<=threshold).all(): # if all trials picked < threshold against trial to be added, add to trials to keep
-            trials2keep.append(trial)
-
-    return trials2keep
 
 def hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, n_trials=100, time_limit=None, verbose=True):
     """
@@ -46,7 +19,8 @@ def hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction=None, cv_task=None, m
     - https://optuna.readthedocs.io/en/v3.0.2/reference/generated/optuna.integration.CatBoostPruningCallback.html
     - does not work for GPU
 
-    # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
+    Autogluon search space
+    - https://github.com/autogluon/tabrepo/blob/main/tabrepo/models/catboost/generate.py
 
     time_limit = seconds, time spent running hpo
     """
@@ -61,9 +35,12 @@ def hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction=None, cv_task=None, m
 
     def objective(trial):
         params_opt = {
-            'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.1, step=.01),
-            'depth': trial.suggest_int('depth', 1, 16),
-            'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 0.5, 10, step=0.5),
+            'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
+            'depth': trial.suggest_int('depth', 4, 10),
+            'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10, step=0.5),
+            'max_ctr_complexity': trial.suggest_int('max_ctr_complexity', 1, 5),
+            'one_hot_max_size': trial.suggest_categorical("one_hot_max_size", [2, 3, 5, 10]),
+            'grow_policy': trial.suggest_categorical("grow_policy", ["SymmetricTree", "Depthwise"]),
             'use_best_model': True,
             'iterations': 5000,
             'random_strength': 0
@@ -73,7 +50,7 @@ def hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction=None, cv_task=None, m
         if time_limit is not None:
             secs_elapsed = toc(secs_elapsed=True)
             if secs_elapsed > time_limit:
-                print('EXIT STUDY...time limited surpassed')
+                print('EXIT STUDY...time limited exceeded')
                 return study.stop()
 
         # Check whether we already evaluated the trial
@@ -161,7 +138,7 @@ if __name__ == '__main__':
     cv_task = 'regression'
     direction = 'minimize'
 
-    lb = hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, n_trials=200, verbose=True)
+    lb = hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, n_trials=25, verbose=True)
     lb = hpo_optuna_catboost(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, time_limit=60*1, verbose=True)
     lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_catboost.pkl")
     pass

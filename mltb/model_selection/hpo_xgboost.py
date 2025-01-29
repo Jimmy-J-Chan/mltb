@@ -9,41 +9,50 @@ from mltb.model_selection.diversity_selection import diversity_selection
 
 SEED = 888
 
-
-def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, n_trials=100, time_limit=None, verbose=True):
+def hpo_optuna_xgboost(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, n_trials=100, time_limit=None, verbose=True):
     """
-    hyperparameter optimization(hpo) for lgbm using optuna
+    hyperparameter optimization(hpo) for xgboost using optuna
     - returns as leaderboard with indication for trials to consider
 
-    optuna lgbm pruner
-    - https://github.com/optuna/optuna-examples/blob/main/lightgbm/lightgbm_integration.py
+    optuna pruner
+    - https://github.com/optuna/optuna-examples/blob/main/xgboost/xgboost_integration.py
 
-    Autogluon search space
-    # https://github.com/autogluon/tabrepo/blob/main/tabrepo/models/lightgbm/generate.py
+    # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
+
+    autogluon search space
+    - https://github.com/autogluon/tabrepo/blob/main/tabrepo/models/xgboost/generate.py
 
     time_limit = seconds, time spent running hpo
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
     #metric_scaler = 1 if metric.greater_is_better else -1
+    cat_cols = [c for c in X.columns if (X[c].dtype=='object')|(X[c].dtype=='category')]
 
     def objective(trial):
         params_opt = {
-            'boosting_type': trial.suggest_categorical("boosting_type", ["gbdt", "dart"]),
-            'max_bin': trial.suggest_int('max_bin', 64, 512),
-            'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.1, log=True),
-            'num_iterations': trial.suggest_int('num_iterations', 50, 500, step=50),
-            'num_leaves': trial.suggest_int('num_leaves', 16, 255),
-            'max_depth ': -1, # unlimited
-            'min_data_in_leaf': trial.suggest_int('min_data_in_leaf', 5, 100),
-            'bagging_fraction': trial.suggest_float('bagging_fraction', 0.4, 1.0),
-            'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
-            'feature_fraction': trial.suggest_float('feature_fraction', 0.4, 1.0),
-            'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
-            'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
-            'extra_trees': trial.suggest_categorical("extra_trees", [True, False]),
-            'early_stopping_round': 100
+            'booster': trial.suggest_categorical("booster", ["gbtree", "dart"]),
+            'lambda': trial.suggest_float('lambda', 1e-8, 1.0, log=True),
+            'alpha': trial.suggest_float('alpha', 1e-8, 1.0, log=True),
+            'min_child_weight': trial.suggest_float('min_child_weight', 0.5, 1.5, step=0.1),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0, step=0.1),
+            'early_stopping_rounds': 100,
         }
+
+        if (params_opt["booster"] == "gbtree") | (params_opt["booster"] == "dart"):
+            params_opt["max_depth"] = trial.suggest_int("max_depth", 1, 10)
+            params_opt["eta"] = trial.suggest_float("eta", 1e-8, 1.0, log=True)
+            params_opt["gamma"] = trial.suggest_float("gamma", 1e-8, 1.0, log=True)
+            params_opt["grow_policy"] = trial.suggest_categorical("grow_policy", ["depthwise", "lossguide"])
+
+        if params_opt["booster"] == "dart":
+            params_opt["sample_type"] = trial.suggest_categorical("sample_type", ["uniform", "weighted"])
+            params_opt["normalize_type"] = trial.suggest_categorical("normalize_type", ["tree", "forest"])
+            params_opt["rate_drop"] = trial.suggest_float("rate_drop", 1e-8, 1.0, log=True)
+            params_opt["skip_drop"] = trial.suggest_float("skip_drop", 1e-8, 1.0, log=True)
+
+        if len(cat_cols)>0:
+            params_opt['enable_categorical'] = True
 
         # manage time_limit
         if time_limit is not None:
@@ -59,12 +68,13 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_p
             if trial.params == t.params:
                 return t.value # Use the existing value as trial duplicated the parameters.
 
-        mdl_opt = mdl(**params_opt|mdl_params)
         eval_metric = get_eval_metric(cv_task)
-        fit_params = {'callbacks': [optuna.integration.LightGBMPruningCallback(trial, eval_metric)],
-                      'eval_metric': eval_metric}
+        other_params = {'callbacks': [optuna.integration.XGBoostPruningCallback(trial, f"validation_0-{eval_metric}")],
+                        'eval_metric': metric}
+        fit_params = {'verbose': mdl_params['verbose']}
+        mdl_opt = mdl(**params_opt|mdl_params|other_params)
 
-        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, fit_params=fit_params, verbose=False)
+        oof, score, ytest = run_cv(X, y, None, cv_g, mdl_opt, metric, cv_task, fit_params=fit_params,verbose=False)
         #score = score * metric_scaler
         return score
 
@@ -103,7 +113,7 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_p
 
 if __name__ == '__main__':
     import pandas as pd
-    from lightgbm import LGBMRegressor
+    from xgboost import XGBRegressor
     from sklearn.metrics import root_mean_squared_error as rmse
     from sklearn.model_selection import StratifiedKFold
 
@@ -123,14 +133,14 @@ if __name__ == '__main__':
     cv_g = StratifiedKFold(n_splits=kfolds)
     metric = rmse
     setattr(metric, 'greater_is_better', False)
-    mdl_params = {'verbose': -1, 'random_state': SEED}
-    mdl = LGBMRegressor
+    mdl_params = {'verbose': False, 'random_state': SEED}
+    mdl = XGBRegressor
     cv_task = 'regression'
     direction = 'minimize'
 
-    # lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, n_trials=100, verbose=True)
-    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, time_limit=60*1, verbose=True)
-    lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
+    lb = hpo_optuna_xgboost(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, n_trials=20, verbose=True)
+    # lb = hpo_optuna_xgboost(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, time_limit=60*1, verbose=True)
+    lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_xgboost.pkl")
     pass
 
 
