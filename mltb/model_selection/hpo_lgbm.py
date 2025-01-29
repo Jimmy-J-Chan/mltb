@@ -4,6 +4,7 @@ from optuna.samplers import TPESampler
 from optuna.pruners import HyperbandPruner
 from optuna.trial import TrialState
 from mltb.model_selection.get_eval_metric import get_eval_metric
+from mltb.utils.utilities import tic, toc
 
 SEED = 888
 
@@ -38,7 +39,7 @@ def diversity_selection(lb=None):
 
     return trials2keep
 
-def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, trials=100, verbose=True):
+def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_params=None, n_trials=100, time_limit=None, verbose=True):
     """
     hyperparameter optimization(hpo) for lgbm using optuna
     - returns as leaderboard with indication for trials to consider
@@ -47,6 +48,8 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_p
     - https://github.com/optuna/optuna-examples/blob/main/lightgbm/lightgbm_integration.py
 
     # https://rdrr.io/github/Laurae2/LauraeDS/man/Laurae.xgb.train.html
+
+    time_limit = seconds, time spent running hpo
     """
     if not hasattr(metric, 'greater_is_better'):
         raise AttributeError(f"Metric missing attribute: 'greater_is_better'")
@@ -70,6 +73,13 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_p
             'early_stopping_round': 100
         }
 
+        # manage time_limit
+        if time_limit is not None:
+            secs_elapsed = toc(secs_elapsed=True)
+            if secs_elapsed > time_limit:
+                print('EXIT STUDY...time limited surpassed')
+                return study.stop()
+
         # Check whether we already evaluated the trial
         states_to_consider = (TrialState.COMPLETE,)
         trials_to_consider = trial.study.get_trials(deepcopy=False, states=states_to_consider)
@@ -86,25 +96,36 @@ def hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction=None, cv_task=None, mdl_p
         #score = score * metric_scaler
         return score
 
-    study = optuna.create_study(direction=direction, sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
-    study.optimize(objective, n_trials=trials, timeout=60*10)
+    if time_limit is not None:
+        tic()
+        n_trials = 10_000
 
-    # check n_trials are conducted - sometimes exits early
-    trials2complete = trials - len(study.trials)
-    while trials2complete>0:
-        study.optimize(objective, n_trials=trials2complete, timeout=60*10)
-        trials2complete = trials - len(study.trials)
+    study = optuna.create_study(direction=direction, sampler=TPESampler(seed=SEED), pruner=HyperbandPruner())
+    study.optimize(objective, n_trials=n_trials, timeout=60*10)
+
+    # check n_trials are conducted (sometimes exits early), or time_limit not reached yet
+    if time_limit is not None:
+        secs_elapsed = toc(secs_elapsed=True)
+        while secs_elapsed < time_limit:
+            study.optimize(objective, n_trials=n_trials, timeout=60*10)
+            secs_elapsed = toc(secs_elapsed=True)
+    else:
+        trials2complete = n_trials - len(study.trials)
+        while trials2complete > 0:
+            study.optimize(objective, n_trials=trials2complete, timeout=60*10)
+            trials2complete = trials - len(study.trials)
 
     # leaderboard and df
-    lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'})
-    lb = lb.drop_duplicates()
-    lb.columns = [c[7:] if c.startswith('params_') else c for c in lb.columns]
-    lb = lb.sort_values(by=['score'], ascending=False if metric.greater_is_better else True)
+    lb = study.trials_dataframe(attrs=['value','params']).rename(columns={'value':'score'}).dropna(subset=['score'])
+    if len(lb) > 0:
+        lb = lb.drop_duplicates()
+        lb.columns = [c[7:] if c.startswith('params_') else c for c in lb.columns]
+        lb = lb.sort_values(by=['score'], ascending=False if metric.greater_is_better else True)
 
-    # diversity selection
-    trials2keep = diversity_selection(lb)
-    lb['trials2keep'] = False
-    lb.loc[lb.index.isin(trials2keep),'trials2keep'] = True
+        # diversity selection
+        trials2keep = diversity_selection(lb)
+        lb['trials2keep'] = False
+        lb.loc[lb.index.isin(trials2keep),'trials2keep'] = True
     return lb
 
 
@@ -135,7 +156,8 @@ if __name__ == '__main__':
     cv_task = 'regression'
     direction = 'minimize'
 
-    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, trials=200, verbose=True)
+    # lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, n_trials=100, verbose=True)
+    lb = hpo_optuna_lgbm(X, y, cv_g, mdl, metric, direction, cv_task, mdl_params, time_limit=60*1, verbose=True)
     lb.to_pickle(r"C:\Users\Jimmy\PycharmProjects\mltb\data\used_car_prices\lb_hpo_optuna_lgbm.pkl")
     pass
 
