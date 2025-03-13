@@ -5,8 +5,8 @@
 /mltb.egg-info/
 #/data
 
-/data/used_car_prices/test.csv
-/data/used_car_prices/train.csv
-/data/used_car_prices/ypreds_lgbm.pkl
+/mltb/data/used_car_prices/test.csv
+/mltb/data/used_car_prices/train.csv
+/mltb/data/used_car_prices/ypreds_lgbm.pkl
 
 /mltb/model_selection/catboost_info
